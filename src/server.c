@@ -22,6 +22,15 @@
 #define OPEN_R(file) \
 	open(file, O_RDONLY)
 
+void error_out(struct lib l) {
+	if (strlen(l.filename) == 0)
+		printf("Error: %s %s could not be executed.\n",
+			l.libname, l.funcname);
+	else 
+		printf("Error: %s %s %s could not be executed.\n",
+			l.libname, l.funcname, l.filename);
+}
+
 int shell_open_ca(file, mode) {
 	// if (mode == IO_REGULAR)
 		return open(file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -69,6 +78,7 @@ static int lib_load(struct lib *lib)
 
 static int lib_execute(struct lib *lib)
 {
+	int err = 0;
 	/* TODO: Implement lib_execute(). */
 	lib->handle = dlopen(lib->libname, RTLD_NOW|RTLD_GLOBAL);
 	int BACKUPS_FILENO[] = {
@@ -82,6 +92,7 @@ static int lib_execute(struct lib *lib)
 	int ofd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	// printf("OUT FILE DESC: %d\n", ofd);
 	REDIRECTS_FILENO[1] = dup2(ofd, STDOUT_FILENO);
+	REDIRECTS_FILENO[2] = dup2(ofd, STDERR_FILENO);
 
 	
 	if(strlen(lib->filename) == 0) {
@@ -95,11 +106,13 @@ static int lib_execute(struct lib *lib)
 		char *error;
 		if ((error = dlerror()) != NULL)  {
 			// printf("error: %s\n", error);
-			return -1;
+			error_out(*lib);
+			err = -1;
 		}
-
-		lib->run = run;
-		lib->run();
+		if (err >= 0) {
+			lib->run = run;
+			lib->run();
+		}
 	} else {
 		// printf("m_lib_execute: [%s] of [%s], [%s]\n", lib->funcname, lib->libname, lib->filename);
 		lambda_param_func_t run;
@@ -108,13 +121,17 @@ static int lib_execute(struct lib *lib)
 		char *error;
 		if ((error = dlerror()) != NULL)  {
 			// printf("error: %s\n", error);
-			return -1;
+			error_out(*lib);
+			err = -1;
 		}
-
-		lib->p_run = run;
-		lib->p_run(lib->filename);
+		if (err >= 0) {
+			lib->p_run = run;
+			lib->p_run(lib->filename);
+		}
 	}
 	fflush(stdout);
+	fflush(stderr);
+
 	for (int i = 0; i < 3; ++i)
 		if (REDIRECTS_FILENO[i] != -1)
 			close(REDIRECTS_FILENO[i]);
@@ -122,7 +139,7 @@ static int lib_execute(struct lib *lib)
 		if (REDIRECTS_FILENO[i] != -1)
 			dup2(BACKUPS_FILENO[i], i);
 
-	return 0;
+	return err;
 }
 
 static int lib_close(struct lib *lib)
@@ -180,8 +197,6 @@ int main(void)
 
 	// lib_prehooks(lib);
 	srand(time(NULL));   // Initialization, should only be called once.
-
-	
 	remove(SOCKET_NAME);
 	int fd = create_socket();
 	bind_socket(fd);
